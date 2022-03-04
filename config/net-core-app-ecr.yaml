@@ -1,0 +1,29 @@
+## Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved
+##
+### SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create AWS ECR that will have application docker image for .NET WebApi that talks to Aurora.
+Parameters:
+  AppStackName:
+    Description: An Application name that will be prefixed to resource names
+    Type: String
+    Default: net-core-stack    
+Resources:
+  ECRRepository: 
+    Type: AWS::ECR::Repository
+    Properties: 
+      RepositoryName: !Sub ${AppStackName}-repo
+      RepositoryPolicyText: 
+        Version: "2012-10-17"
+        Statement: 
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole' 
+  
+Outputs:
+  Arn:
+    Value: !GetAtt ECRRepository.Arn
+  

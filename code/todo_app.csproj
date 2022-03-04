@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <!-- <DockerDefaultTargetOS>Windows</DockerDefaultTargetOS> -->
+    <DockerfileContext>.</DockerfileContext>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.10.8" />
+    <PackageReference Include="AWSSDK.SimpleSystemsManagement" Version="3.3.106" />
+    <PackageReference Include="Amazon.Extensions.Configuration.SystemsManager" Version="1.2.0" />
+    <PackageReference Include="MySql.EntityFrameworkCore" Version="3.1.10+m8.0.23" />
+  </ItemGroup>
+
+
+</Project>

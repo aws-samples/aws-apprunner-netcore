@@ -1,0 +1,678 @@
+## Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved
+##
+### SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create AWS infrastructure to deploy .NET WebApi on AWS App Runner that talks to Aurora.
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: '10.0.0.0/16'
+    PublicOne:
+      CIDR: '10.0.0.0/24'
+    PublicTwo:
+      CIDR: '10.0.1.0/24'
+    PrivateOne:
+      CIDR: '10.0.2.0/24'
+    PrivateTwo:
+      CIDR: '10.0.3.0/24'      
+Parameters:
+  ECRRepo:
+    Description: ECR Repository name
+    Type: String
+    Default: net-core-stack-ecr-repo    
+  DBUser:
+    Type: String
+    Default: root
+  DBPassword:
+    Type: String
+    Default: netc0re123
+  DBName:
+    Type: String
+    Default: todo
+  AppStackName:
+    Description: An Application name that will be prefixed to resource names
+    Type: String
+    Default: net-core-stack
+Resources:
+  DbVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 
+        !FindInMap ['SubnetConfig', 'VPC', 'CIDR']
+      Tags:
+        - Key: Name
+          Value: !Ref AppStackName     
+        - Key: Project
+          Value: .Net Core on AWS   
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: DbVPC
+      CidrBlock:
+        !FindInMap ['SubnetConfig', 'PublicOne', 'CIDR']
+      AvailabilityZone:
+         Fn::Select:
+         - 0
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} Public Subnet (AZ1)     
+        - Key: Project
+          Value: .Net Core on AWS           
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: DbVPC
+      CidrBlock:
+        !FindInMap ['SubnetConfig', 'PublicTwo', 'CIDR']
+      AvailabilityZone:
+         Fn::Select:
+         - 1
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} Public Subnet (AZ2)   
+        - Key: Project
+          Value: .Net Core on AWS   
+  PrivateSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: DbVPC
+        CidrBlock:
+          !FindInMap ['SubnetConfig', 'PrivateOne', 'CIDR']
+        AvailabilityZone:
+          Fn::Select:
+          - 0
+          - Fn::GetAZs: {Ref: 'AWS::Region'}
+        Tags:
+          - Key: Name
+            Value: !Sub ${AppStackName} Private Subnet (AZ1)       
+          - Key: Project
+            Value: .Net Core on AWS            
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: DbVPC
+      CidrBlock:
+        !FindInMap ['SubnetConfig', 'PrivateTwo', 'CIDR']
+      AvailabilityZone:
+        Fn::Select:
+        - 1
+        - Fn::GetAZs: {Ref: 'AWS::Region'}
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} Private Subnet (AZ2)       
+        - Key: Project
+          Value: .Net Core on AWS                       
+  IGW:
+    DependsOn: DbVPC
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} - Internet Gateway    
+        - Key: Project
+          Value: .Net Core on AWS             
+  VPCGatewayAttachment:
+    DependsOn: IGW
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: DbVPC
+      InternetGatewayId:
+        Ref: IGW
+  NAT1EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  NAT2EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  NATGateway1:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+        - NAT1EIP
+        - AllocationId
+      SubnetId:
+        Ref: PublicSubnet1
+  NATGateway2:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+        - NAT2EIP
+        - AllocationId
+      SubnetId:
+        Ref: PublicSubnet2
+  PrivateSubnet1RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: DbVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} Private Route     
+        - Key: Project
+          Value: .Net Core on AWS           
+  PrivateSubnet1Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'PrivateSubnet1RouteTable'
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+        Ref: NATGateway1
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnet1
+      RouteTableId:
+        Ref: PrivateSubnet1RouteTable
+  PrivateSubnet2RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: DbVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} Private Route   
+        - Key: Project
+          Value: .Net Core on AWS          
+  PrivateSubnet2Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: PrivateSubnet2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+        Ref: NATGateway2
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnet2
+      RouteTableId:
+        Ref: PrivateSubnet2RouteTable        
+  PublicSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: DbVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} Public Route        
+        - Key: Project
+          Value: .Net Core on AWS          
+  PublicSubnetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: 
+        Ref: PublicSubnetRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: IGW
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PublicSubnet1
+      RouteTableId:
+        Ref: PublicSubnetRouteTable
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PublicSubnet2
+      RouteTableId:
+        Ref: PublicSubnetRouteTable
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AppStackName}-rds-db-sg
+      GroupDescription: Access to the RDS
+      VpcId: !Ref 'DbVPC'
+
+  DBSecurityGroupIngressTCP:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: DBSecurityGroup
+    Properties:
+      Description: Ingress 3306 
+      GroupId: !Ref 'DBSecurityGroup'
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !GetAtt DbVPC.DefaultSecurityGroup  
+  #Aurora SQL
+  RDSCluster:
+    Properties: 
+      DBClusterParameterGroupName: 
+        Ref: RDSDBClusterParameterGroup
+      Engine: aurora
+      EngineMode: serverless
+      MasterUserPassword: 
+        Ref: DBPassword
+      MasterUsername: 
+        Ref: DBUser
+      DBClusterIdentifier: !Sub ${AppStackName}
+      DatabaseName: 
+        Ref: DBName
+      DBSubnetGroupName: 
+        Ref: DBSubnetGroup    
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} Aurora Serverless Cluster   
+        - Key: Project
+          Value: .Net Core on AWS          
+      VpcSecurityGroupIds:
+        - Ref: DBSecurityGroup                 
+    Type: "AWS::RDS::DBCluster"
+    DependsOn: DBSubnetGroup
+  RDSDBClusterParameterGroup: 
+    Properties: 
+      Description: "CloudFormation Sample Aurora Cluster Parameter Group"
+      Family: aurora5.6
+      Parameters: 
+        time_zone: US/Eastern
+    Type: "AWS::RDS::DBClusterParameterGroup"    
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties: 
+      DBSubnetGroupDescription: RDS Subnet group for Aurora
+      DBSubnetGroupName: !Sub ${AppStackName}-aurora-subnet-group
+      SubnetIds: 
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppStackName} RDS Subnet Group
+        - Key: Project
+          Value: .Net Core on AWS  
+  RDSDBParameterGroup:
+    Type: 'AWS::RDS::DBParameterGroup'
+    Properties:
+      Description: CloudFormation Sample Aurora Parameter Group
+      Family: aurora5.6
+      Parameters:
+        sql_mode: IGNORE_SPACE
+        max_allowed_packet: 1024
+        innodb_buffer_pool_size: '{DBInstanceClassMemory*3/4}'        
+  #Code Commit
+  CodeCommitRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub ${ECRRepo}
+      RepositoryDescription: Respository to maintain code related to the Todo Api.
+  #Code Build
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AppStackName}-todo-codebuild
+      Description: Todo Api application codebuild project.
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: no_artifacts
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:2.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+            - Name: REPOSITORY_URI
+              Type: PLAINTEXT
+              Value: 
+                Fn::Join:
+                  - ''
+                  - - Ref: AWS::AccountId
+                    - '.dkr.ecr.'
+                    - Ref: AWS::Region
+                    - '.amazonaws.com/'
+                    - !Sub ${ECRRepo}  
+            - Name: AWS_DEFAULT_REGION
+              Type: PLAINTEXT
+              Value: 
+                Ref: AWS::Region  
+            - Name: ACCOUNT_NUMBER
+              Type: PLAINTEXT
+              Value: 
+                Ref: AWS::AccountId  
+            - Name: APP_SVC
+              Type: PLAINTEXT
+              Value: 'example/apprunnerdotnetsvc'       
+      Source:
+        BuildSpec: config/buildspec.yml
+        Location: 
+          Fn::Join:
+            - ''
+            - - 'https://git-codecommit.'
+              - Ref: AWS::Region
+              - '.amazonaws.com/v1/repos/'
+              - !Sub ${ECRRepo}
+        Type: CODECOMMIT 
+      SourceVersion: refs/heads/master
+      TimeoutInMinutes: 10 
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess 
+      - arn:aws:iam::aws:policy/AWSCodeCommitFullAccess   
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [codebuild.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 'logs:*'
+                - 'ec2:CreateNetworkInterface'
+                - 'ec2:DescribeNetworkInterfaces'
+                - 'ec2:DeleteNetworkInterface'
+                - 'ec2:DescribeSubnets'
+                - 'ec2:DescribeSecurityGroups'
+                - 'ec2:DescribeDhcpOptions'
+                - 'ec2:DescribeVpcs'
+                - 'ec2:CreateNetworkInterfacePermission'
+                Effect: Allow
+                Resource: '*'
+  #CodeDeploy
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ComputePlatform: ECS
+  # CloudWatchEvents Code build Rold            
+  CloudWatchEventsCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppStackName}-cloud-watch-events-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+      - PolicyName: aws-events-code-build
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action:
+              - 'codebuild:StartBuild'
+            Resource: !GetAtt CodeBuildProject.Arn              
+  # CloudWatch Event Rule for codecommit build trigger
+  CloudWatchEventCodeBuildEventRule: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "This event rule triggers the build on code commit event"
+      EventPattern: 
+        source: 
+          - "aws.codecommit"
+        detail-type: 
+          - "CodeCommit Repository State Change"
+        detail: 
+          event: 
+            - "referenceCreated"
+            - "referenceUpdated"
+          referenceType: 
+            - "branch"
+          referenceName: 
+            - "master"                    
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: {'Fn::GetAtt': [CodeBuildProject, Arn]}
+          Id: cloudwatch-codebuild-eventrules  
+          RoleArn: !GetAtt CloudWatchEventsCodeBuildRole.Arn
+  #Amazon Systems Manager
+  SystemsManagerBasicParameter:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Name: "/Database/Config/AuroraConnectionString"
+      Type: "String"
+      Value: !Join [ "",
+          [
+            "server=",
+            !Join [ "", [ !GetAtt RDSCluster.Endpoint.Address, "" ] ],
+            ";port=",
+            !GetAtt RDSCluster.Endpoint.Port,
+            ";database=", !Join [ "", [ Ref: DBName, "" ] ],
+            ";uid=", !Join [ "", [ Ref: DBUser, "" ] ],
+            ";password=", !Join [ "", [ Ref: DBPassword, "" ] ],
+            ";SSLMode=None"
+          ]
+        ]       
+      Description: "SSM Parameter for maintaining the Aurora DB connection string."
+      Tags:
+        "Environment": "DEV"  
+  SystemsManagerBasicDBNameParameter:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Name: "/Database/Config/DBName"
+      Type: "String"
+      Value: !Join [ "", [ Ref: DBName, "" ] ]
+      Description: "SSM Parameter for maintaining the Aurora DBName."
+      Tags:
+        "Environment": "DEV"    
+  SystemsManagerBasicDBUserParameter:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Name: "/Database/Config/DBUser"
+      Type: "String"
+      Value: !Join [ "", [ Ref: DBUser, "" ] ]
+      Description: "SSM Parameter for maintaining the Aurora DBUser."
+      Tags:
+        "Environment": "DEV"          
+  SystemsManagerBasicDBPasswordParameter:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Name: "/Database/Config/DBPassword"
+      Type: "String"
+      Value: !Join [ "", [ Ref: DBPassword, "" ] ]
+      Description: "SSM Parameter for maintaining the Aurora DBPassword."
+      Tags:
+        "Environment": "DEV"     
+  SystemsManagerBasicDBHostParameter:
+    Type: "AWS::SSM::Parameter"
+    Properties:
+      Name: "/Database/Config/DBHost"
+      Type: "String"
+      Value: !Join [ "", [ !GetAtt RDSCluster.Endpoint.Address, "" ] ] 
+      Description: "SSM Parameter for maintaining the Aurora DB Host."
+      Tags:
+        "Environment": "DEV"  
+
+  # AppRunner Service Access Role
+  AppRunnerServiceAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppStackName}-service-access-role
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [build.apprunner.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: AmazonAppRunnerExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:BatchGetImage'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+
+  AppRunnerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppStackName}-instance-role
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonRDSFullAccess 
+        - arn:aws:iam::aws:policy/AmazonSSMFullAccess 
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [tasks.apprunner.amazonaws.com]
+          Action: ['sts:AssumeRole'] 
+      Path: /
+      Policies:
+      - PolicyName: net-core-instance-role-policy
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              - 's3:get*'
+            Resource: '*'
+  VpcConnector:
+    Type: AWS::AppRunner::VpcConnector
+    Properties:
+      VpcConnectorName: !Sub ${AppStackName}-VpcConnector
+      Subnets:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroups:
+        - !GetAtt DbVPC.DefaultSecurityGroup
+  
+  AppRunner:  
+    DependsOn: RDSCluster
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: !Sub ${AppStackName}-AppRunnerSvc
+      NetworkConfiguration:
+        EgressConfiguration:
+          EgressType: VPC
+          VpcConnectorArn: !GetAtt VpcConnector.VpcConnectorArn
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt AppRunnerServiceAccessRole.Arn
+        AutoDeploymentsEnabled: true
+        ImageRepository:
+          ImageIdentifier: 
+            Fn::Join:
+              - ''
+              - - Ref: AWS::AccountId
+                - '.dkr.ecr.'
+                - Ref: AWS::Region
+                - '.amazonaws.com/'
+                - !Sub ${ECRRepo}
+                - ':latest'  
+          ImageRepositoryType: ECR 
+          ImageConfiguration:
+            Port: 8080
+            RuntimeEnvironmentVariables:
+              -
+                Name: Name
+                Value: !Ref AppStackName
+              -
+                Name: PROJECT
+                Value: .NET Core on App Runner
+      InstanceConfiguration:
+        Cpu: 1 vCPU
+        Memory: 2 GB       
+        InstanceRoleArn: !GetAtt AppRunnerInstanceRole.Arn   
+      Tags:
+        - Key: Name
+          Value: !Ref AppStackName     
+        - Key: Project
+          Value: .Net Core on AWS App Runner
+Outputs:
+  AppRunnerServiceAccessRole:
+    Description: The ARN of the App Runner Service role
+    Value: !GetAtt 'AppRunnerServiceAccessRole.Arn'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'AppRunnerServiceAccessRole' ] ]
+  AppRunnerInstanceRole:
+    Description: The ARN of the App Runner Instance role
+    Value: !GetAtt 'AppRunnerInstanceRole.Arn'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'AppRunnerInstanceRole' ] ]      
+  AppRunnerServiceUrl:
+    Description: App Runner Service URL Healthcheck Endpoint
+    Value: !Join [ "",
+          [
+            "https://",
+            !GetAtt AppRunner.ServiceUrl,
+            "/api/values"            
+          ]
+        ]       
+  CodeCommitRepositoryName:
+    Description: The name of the CodeCommit Repository
+    Value: !Ref 'CodeCommitRepository'
+  CodeBuildName:
+    Description: The name of the CodeBuild.
+    Value: !Ref 'CodeBuildProject'    
+  PublicSubnet1:
+    Description: Public subnet one
+    Value: !Ref 'PublicSubnet1'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet1' ] ]
+  PublicSubnet2:
+    Description: Public subnet two
+    Value: !Ref 'PublicSubnet2'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnet2' ] ]
+  PrivateSubnet1:
+    Description: Private subnet one
+    Value: !Ref 'PrivateSubnet1'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PrivateSubnet1' ] ]
+  PrivateSubnet2:
+    Description: Private subnet two
+    Value: !Ref 'PrivateSubnet2'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PrivateSubnet2' ] ]      
+  RDSCluster:
+    Description: RDSCluster where TODO database is created
+    Value: !Join [ "",
+          [
+            "server=",
+            !Join [ "", [ !GetAtt RDSCluster.Endpoint.Address, "" ] ],
+            ";port=",
+            !GetAtt RDSCluster.Endpoint.Port,
+            ";database=", !Join [ "", [ Ref: DBName, "" ] ],
+            ";uid=", !Join [ "", [ Ref: DBUser, "" ] ],
+            ";password=<check_your_code>",
+            ";SSLMode=None"
+          ]
+        ]       
+  VPCId:
+    Description: The ID of the VPC that this stack is deployed in
+    Value: !Ref 'DbVPC'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'DbVPC' ] ]      

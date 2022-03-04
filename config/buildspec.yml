@@ -1,0 +1,33 @@
+## Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved
+##
+### SPDX-License-Identifier: MIT-0
+
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      dotnet: 3.1
+  pre_build:
+    commands:
+      - aws --version
+      # Cloudformation will set this application environment variables for CodeBuild
+      # REPOSITORY_URI=<youraccountnumber>.dkr.ecr.<region>.amazonaws.com/net-core-todo-ecr-repo
+      # AWS_DEFAULT_REGION=region ex: us-east-1
+      - echo 'region - ' - $AWS_DEFAULT_REGION
+      - echo 'repository - ' $REPOSITORY_URI
+      - cd code/
+      - echo Logging in to Amazon ECR
+      - $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t $APP_SVC .
+      - docker tag $APP_SVC $REPOSITORY_URI:latest
+
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Push the latest Docker Image...
+      - docker push $REPOSITORY_URI:latest
